@@ -1,3 +1,6 @@
-fastapi==0.161.1
+fastapi==0.162.0
 kaggle==2.2.5
+pandas==3.1.0
 python-dotenv==1.2.4
+Requests==2.34.2
+yfinance==1.7.0
