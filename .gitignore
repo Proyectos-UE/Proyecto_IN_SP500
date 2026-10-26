@@ -1,3 +1,3 @@
 .env
-data/SP500Data
+data/
 __pycache__/
