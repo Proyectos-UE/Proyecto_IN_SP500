@@ -1,20 +1,21 @@
-#AQUI PARA HACER LA APLICACION
-from fastapi import FastAPI, HTTPException, Request, Depends
-from pydantic import ValidationError
+import hashlib
+import hmac
+import os
+import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Annotated
-import os
-import hmac
-import hashlib
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Request
-from pydantic import ValidationError
 from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Path as PathParam, Query
+from fastapi.concurrency import run_in_threadpool
+from pydantic import ValidationError
 
 from datos import DataStore
-from models import Company, PricePoint, PriceSeries, Sector, ValidacionBase
+from inbox import EventConflict, Inbox
+from models import Company, Evento, PricePoint, PriceSeries, Sector, ValidacionBase
 
 load_dotenv()
 
@@ -48,14 +49,14 @@ def nan_to_none(value):
     """pandas usa NaN para los huecos; en JSON tiene que ser null."""
     return None if pd.isna(value) else value
 
-def create_app(dataDir: Path, secretWH: bytes) -> FastAPI:
-    """Crea la app en local"""
+def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) -> FastAPI:
+    """Crea la app. Los eventos recibidos se guardan en inboxPath (por defecto dataDir/inbox.db)."""
     if not secretWH:
         raise ValueError('La variable WebhookSecret es necesaria')
-    app = FastAPI(title='API_SP500', version="0.0.1")
 
     store = DataStore(dataDir)
     store.load()
+    inbox = Inbox(inboxPath or dataDir / 'inbox.db')
 
     app = FastAPI(title='API_SP500', version="0.1.0")
 
@@ -76,7 +77,7 @@ def create_app(dataDir: Path, secretWH: bytes) -> FastAPI:
 
     #Al pedir directamente el request no se muestra la información a rellenar en docs
     async def validacionesBase(request: Request) -> dict: 
-        """Comprueba tamaño, la calve WEBHOOK_SECRET y valida el cuerpo de la petición"""
+        """Comprueba tamaño, firma WEBHOOK_SECRET, cabecera x-origen y valida el cuerpo de la petición"""
         
         content_length = request.headers.get('content-length')
         if content_length and int(content_length) > 65536:
@@ -90,22 +91,32 @@ def create_app(dataDir: Path, secretWH: bytes) -> FastAPI:
         secret_recibido = request.headers.get('x-signature', '')    
         if not valid_signature(bodyRaw, secret_recibido, secretWH):
             raise HTTPException(403, 'Firma Invalida')
+
+        origen = request.headers.get('x-origen', '').strip()
+        if not 1 <= len(origen) <= 100:
+            raise HTTPException(422, 'Cabecera x-origen obligatoria (1 a 100 caracteres)')
+
         try:
             data_salida = ValidacionBase.model_validate_json(bodyRaw)
         except ValidationError:
             raise HTTPException(422, 'Esquema de la petición invalido')
 
-        return {'accepted': True, 'output': data_salida.model_dump()}
+        return {'accepted': True, 'origen': origen, 'output': data_salida.model_dump()}
 
     
-    @app.get("/health")
-    def health():
-        return {"status": "ok"}
-
-    @app.post('/verificacion', status_code=202)
+    @app.post('/verificacion', status_code=202, tags=['webhook'])
     async def verificacion(data_salida: dict = Depends(validacionesBase)) -> dict:
-        """Endpoint para comprobar las validaciones base"""
-        return data_salida
+        """Valida el evento, lo guarda en la bandeja y solo entonces confirma (202)."""
+
+        evento = Evento(origen=data_salida['origen'], **data_salida['output'])
+        try:
+            estado = await run_in_threadpool(inbox.store, evento)
+        except EventConflict:
+            raise HTTPException(409, 'event_id reutilizado con contenido distinto')
+        except sqlite3.Error:
+            raise HTTPException(503, 'No se pudo guardar el evento')
+        return {**data_salida, 'status': estado}
+
     @app.get('/v1/companies', response_model=list[Company], tags=['empresas'])
     def list_companies(
         sector: Annotated[str | None, Query(max_length=60)] = None,
