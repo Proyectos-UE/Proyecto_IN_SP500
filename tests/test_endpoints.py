@@ -135,6 +135,9 @@ def test_webhook_con_firma_correcta(client):
     assert response.status_code == 202
     assert response.json()["accepted"] is True
 
+def test_webhook_sin_firma_ni_origen_responde_403(client):
+    client.headers.pop("x-origen", None)          # la firma se comprueba antes que x-origen
+    assert client.post("/verificacion", content=EVENTO).status_code == 403
 
 def test_webhook_sin_firma(client):
     assert client.post("/verificacion", content=EVENTO).status_code == 403
@@ -153,6 +156,7 @@ def test_webhook_cuerpo_modificado_tras_firmar(client):
 
 @pytest.mark.parametrize("origen", [None, "", "   ", "x" * 101])
 def test_webhook_origen_ausente_o_invalido(client, origen):
+    client.headers.pop("x-origen", None) 
     headers = {"x-signature": firmar(EVENTO)}
     if origen is not None:
         headers["x-origen"] = origen
