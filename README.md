@@ -9,8 +9,56 @@ Este tardará bastante, más de 1 h y 30 min, si se ejecuta por primera vez pa
 
 El resultado serán dos archivos .csv con la informacion del precio del SP500 y el otro con detalles de cada empresa que pertenece a este.
 
-## Peticiones
-Nota: De momento no está implementado para poder rellenar los campos en /docs y es necesario usar una forma externa de hacer las peticiones como Postman.
+## Ejemplos de peticiones
+
+Con la API arrancada (`python -m uvicorn app:app --reload`).
+También se pueden probar desde http://127.0.0.1:8000/docs
+
+### Casos correctos
+
+```bash
+curl "http://127.0.0.1:8000/v1/companies?limit=5"                               # 200
+curl "http://127.0.0.1:8000/v1/companies?sector=Technology&limit=5"             # 200
+curl http://127.0.0.1:8000/v1/companies/AAPL                                    # 200
+curl "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=2025-01-01&end=2025-01-31"  # 200
+curl http://127.0.0.1:8000/v1/sectors                                           # 200
+```
+
+### Casos inválidos
+
+```bash
+curl http://127.0.0.1:8000/v1/companies/ZZZZ                                    # 404 empresa inexistente
+curl 'http://127.0.0.1:8000/v1/companies/AA$PL'                                 # 422 ticker mal formado
+curl "http://127.0.0.1:8000/v1/companies?limit=0"                               # 422 fuera de rango
+curl "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=hola"                # 422 fecha inválida
+curl "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=2025-05-01&end=2025-01-01"  # 422 rango invertido
+```
+
+### Acceso no autorizado (webhook)
+
+```bash
+# Sin firma -> 403
+curl -X POST http://127.0.0.1:8000/verificacion \
+  -H "Content-Type: application/json" \
+  -d '{"event_id": "evt-001", "event_type": "verification.simple"}'
+
+# Firma falsa -> 403
+curl -X POST http://127.0.0.1:8000/verificacion \
+  -H "Content-Type: application/json" -H "x-signature: sha256=falsa" \
+  -d '{"event_id": "evt-001", "event_type": "verification.simple"}'
+```
+
+Para el caso correcto (202) la firma se calcula con `WEBHOOK_SECRET`:
+ver el apartado *Verificación* (Postman) o el script `enviar_webhook.py`.
+
+## Tests
+
+```bash
+python -m pytest -v
+```
+
+No necesitan la API arrancada ni los CSV reales: usan datos de ejemplo.
+Cubren casos correctos, inválidos (404/422/503) y no autorizados del webhook (403/413).
 
 ### Verificación
 Se ha implementado verificación con una clave en la cabecera de las peticiones que de momento solo está disponible en /verificacion.
