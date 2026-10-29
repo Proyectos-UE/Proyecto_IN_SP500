@@ -130,7 +130,8 @@ EVENTO = json.dumps({"event_id": "evt-001", "event_type": "verification.simple"}
 
 
 def test_webhook_con_firma_correcta(client):
-    response = client.post("/verificacion", content=EVENTO, headers={"x-signature": firmar(EVENTO)})
+    headers = {"x-signature": firmar(EVENTO), "x-origen": "sensor-01"}
+    response = client.post("/verificacion", content=EVENTO, headers=headers)
     assert response.status_code == 202
     assert response.json()["accepted"] is True
 
@@ -150,9 +151,18 @@ def test_webhook_cuerpo_modificado_tras_firmar(client):
     assert client.post("/verificacion", content=alterado, headers=headers).status_code == 403
 
 
+@pytest.mark.parametrize("origen", [None, "", "   ", "x" * 101])
+def test_webhook_origen_ausente_o_invalido(client, origen):
+    headers = {"x-signature": firmar(EVENTO)}
+    if origen is not None:
+        headers["x-origen"] = origen
+    assert client.post("/verificacion", content=EVENTO, headers=headers).status_code == 422
+
+
 def test_webhook_esquema_invalido(client):
     body = json.dumps({"event_id": "evt-001", "event_type": "otro.tipo"}).encode()
-    assert client.post("/verificacion", content=body, headers={"x-signature": firmar(body)}).status_code == 422
+    headers = {"x-signature": firmar(body), "x-origen": "sensor-01"}
+    assert client.post("/verificacion", content=body, headers=headers).status_code == 422
 
 
 def test_webhook_demasiado_grande(client):
