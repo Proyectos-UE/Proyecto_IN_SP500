@@ -1,19 +1,23 @@
 import hashlib
 import json
 import sqlite3
-import datetime
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
+
 from models import Evento
 
+
 class EventConflict(ValueError):
-    """An event ID or resource revision was reused with different content."""
+    """Un event_id se ha reutilizado con un contenido distinto."""
+
 
 class Inbox:
-    """Base de Datos Local."""
+    """Base de datos local de eventos recibidos."""
+
     def __init__(self, path: Path):
-        self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS eventos (
@@ -26,27 +30,33 @@ class Inbox:
 
     @contextmanager
     def connection(self):
-        """Commit successful work, roll back failures, and always close."""
+        """Confirma si todo va bien, deshace si hay error y siempre cierra."""
         db = sqlite3.connect(self.path, timeout=5)
-        db.row_evento = sqlite3.Row
+        db.row_factory = sqlite3.Row
         try:
             with db:
                 yield db
         finally:
             db.close()
-    
-    def store(self, evento: Evento) -> str:
-        """Persist before acknowledging; reject changed content under the same ID."""
+
+    def store(self, evento: Evento, resultado: str = 'aceptado') -> str:
+        """Guarda el evento. Devuelve 'guardado' o 'duplicado'.
+        Si el mismo (origen, event_id) llega con contenido distinto lanza EventConflict.
+        """
         contenido = json.dumps(evento.model_dump(), sort_keys=True, separators=(',', ':'))
-        hash = hashlib.sha256(contenido.encode()).hexdigest()
+        digest = hashlib.sha256(contenido.encode()).hexdigest()
+        ahora = datetime.now()
         with self.connection() as db:
-            db.execute('BEGIN IMMEDIATE')
-            old = db.execute('SELECT hash FROM events WHERE origen=? AND event_id=?',
+            db.execute('BEGIN IMMEDIATE')   # bloquea escrituras: evita carreras entre duplicados
+            old = db.execute('SELECT hash FROM eventos WHERE origen=? AND event_id=?',
                              (evento.origen, evento.event_id)).fetchone()
             if old is not None:
-                if old['hash'] != hash:
-                    raise EventConflict('Event ID reused with different content')
+                if old['hash'] != digest:
+                    raise EventConflict('event_id reutilizado con contenido distinto')
                 return 'duplicado'
-            db.execute('INSERT INTO events(origen,event_id,event_type,resultado,fecha,hora,contenido,hash) VALUES(?,?,?,?,?,?,?,?)',
-                    (evento.origen, evento.event_id, evento.event_type, evento.resultado, datetime.date.today(), (datetime.now()).strftime("%H:%M:%S"), contenido, hash))
+            db.execute(
+                'INSERT INTO eventos(origen,event_id,event_type,resultado,fecha,hora,contenido,hash) '
+                'VALUES(?,?,?,?,?,?,?,?)',
+                (evento.origen, evento.event_id, evento.event_type, resultado,
+                 ahora.date().isoformat(), ahora.strftime('%H:%M:%S'), contenido, digest))
         return 'guardado'

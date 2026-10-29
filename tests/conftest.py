@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from app import create_app
 
 SECRET = b"secreto-de-prueba"
-
+ORIGEN = {"x-origen": "dispositivo-test"}
 
 @pytest.fixture
 def data_dir(tmp_path):
@@ -50,10 +50,10 @@ def data_dir(tmp_path):
 @pytest.fixture
 def client(data_dir):
     """Cliente de la API con los datos de ejemplo cargados."""
-    return TestClient(create_app(data_dir, SECRET))
+    return TestClient(create_app(data_dir, SECRET), headers=ORIGEN)
 
 
 @pytest.fixture
 def client_sin_datos(tmp_path):
     """Cliente de la API sin CSV (como si no se hubiera ejecutado la ingesta)."""
-    return TestClient(create_app(tmp_path, SECRET))
+    return TestClient(create_app(tmp_path, SECRET), headers=ORIGEN)

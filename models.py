@@ -1,5 +1,5 @@
 from typing import Literal
-from datetime import date, time
+from datetime import date, datetime, time   # añade datetime al import
 from pydantic import BaseModel, ConfigDict, Field
 
 class ValidacionBase(BaseModel):
@@ -15,10 +15,7 @@ class Evento(BaseModel):
     event_id: str = Field(min_length=1, max_length=100)
     event_type: str = Field(min_length=1, max_length=100)
     origen: str = Field(min_length=1, max_length=100)
-    resultado: str = Field(min_length=1, max_length=100)
-    fecha: date = Field(min_length=1, max_length=30)
-    hora: time = Field(min_length=1, max_length=30)
-from datetime import date, datetime, time   # añade datetime al import
+
 
 
 class Company(BaseModel):
