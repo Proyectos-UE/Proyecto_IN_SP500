@@ -93,4 +93,13 @@ Para una validación exitosa será necesario lo siguietne:
 Si las validaciones anteriores pasan se devolverá un 202 con json indicando que ha pasado la validación y el cuerpo de la ptición.
 
 
+## Guardado de eventos
+Cuando un evento pasa todas las validaciones en /verificacion lo guarda en una base SQLite local que crea si no existe. Tiene una única tabla llamada eventos y guarda el evento antes de responder que se ha guardado correctamente.
 
+Cada evento tinene una clave compuesta. Esta clave es origen y event_id, donde origen es el dispositivo que envía el evento que está en la cabecera junto a la firma de la petición. Y el event_id que diferencia eventos enviados por el mismo dispositivo.El mismo event_id desde otros dispositivos son eventos distintos.
+
+### Verificaciones
+- Si se encuentra un evento identico en la base de datos, al comparar los hashes devuelve el estado del evento a "duplicado" y no se guarda.
+- Si tienen la misma clave, origen + event_id, devuelve un error indicando que hay un conflicto de información en el mismo evetno.
+- Si no se puede guardar no se confirma, para que el emisor pueda volver a intentralo.
+- Las peticiones rechazadas no se guardan.
