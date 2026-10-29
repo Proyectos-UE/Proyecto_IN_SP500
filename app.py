@@ -29,6 +29,18 @@ def valid_signature(body: bytes, received: str, secretWH: bytes) -> bool:
     expected = 'sha256=' + hmac.new(secretWH, body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, received)
 
+def exigir_origen(request: Request) -> str:
+    """Dispositivo que envía la petición (cabecera x-origen). Responde 422 si falta o no es válido."""
+    origen = request.headers.get('x-origen', '').strip()
+    if not 1 <= len(origen) <= 100:
+        raise HTTPException(422, 'Cabecera x-origen obligatoria (1 a 100 caracteres)')
+    return origen
+
+
+# Se declara como parámetro de los endpoints GET: origen: OrigenHeader
+OrigenHeader = Annotated[str, Depends(exigir_origen)]
+
+
 def to_company(row: dict) -> Company:
     """Traduce las columnas de Yahoo (modelo externo) a nuestro modelo público."""
     return Company(
@@ -59,6 +71,15 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
     inbox = Inbox(inboxPath or dataDir / 'inbox.db')
 
     app = FastAPI(title='API_SP500', version="0.1.0")
+
+    def guardar_llamada(request: Request, origen: str) -> None:
+        """Guarda en la bandeja que ha llegado esta llamada: (origen, id generado, 'MÉTODO /ruta')."""
+        evento = Evento(origen=origen, event_id=os.urandom(16).hex(),
+                        event_type=f'{request.method} {request.url.path}'[:100])
+        try:
+            inbox.store(evento, 'recibido')
+        except sqlite3.Error:
+            raise HTTPException(503, 'No se pudo guardar el evento')
 
     def require_data() -> None:
         if not store.loaded:
@@ -92,9 +113,8 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
         if not valid_signature(bodyRaw, secret_recibido, secretWH):
             raise HTTPException(403, 'Firma Invalida')
 
-        origen = request.headers.get('x-origen', '').strip()
-        if not 1 <= len(origen) <= 100:
-            raise HTTPException(422, 'Cabecera x-origen obligatoria (1 a 100 caracteres)')
+        # Dispositivo que envía el evento: junto con event_id forma la clave del evento
+        origen = exigir_origen(request)
 
         try:
             data_salida = ValidacionBase.model_validate_json(bodyRaw)
@@ -106,24 +126,28 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
     
     @app.post('/verificacion', status_code=202, tags=['webhook'])
     async def verificacion(data_salida: dict = Depends(validacionesBase)) -> dict:
-        """Valida el evento, lo guarda en la bandeja y solo entonces confirma (202)."""
-
+        """Valida el evento, lo guarda en la bandeja y solo entonces confirma. 
+        Un dos evetnos iguales devuelve status='duplicado' sin guardarlo otra vez."""
         evento = Evento(origen=data_salida['origen'], **data_salida['output'])
         try:
             estado = await run_in_threadpool(inbox.store, evento)
         except EventConflict:
             raise HTTPException(409, 'event_id reutilizado con contenido distinto')
         except sqlite3.Error:
+            # Si no se pudo guardar no se confirma: el emisor reintentará
             raise HTTPException(503, 'No se pudo guardar el evento')
         return {**data_salida, 'status': estado}
 
     @app.get('/v1/companies', response_model=list[Company], tags=['empresas'])
     def list_companies(
+        request: Request,
+        origen: OrigenHeader,
         sector: Annotated[str | None, Query(max_length=60)] = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 20,
         offset: Annotated[int, Query(ge=0)] = 0,
     ) -> list[Company]:
         """Lista las empresas, con filtro por sector y paginación."""
+        guardar_llamada(request, origen)
         require_data()
         rows = list(store.companies.values())
         if sector:
@@ -132,13 +156,15 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
 
     @app.get('/v1/companies/{ticker}', response_model=Company, tags=['empresas'],
              responses={404: {'description': 'Empresa no encontrada'}})
-    def get_company(ticker: Ticker) -> Company:
+    def get_company(request: Request, origen: OrigenHeader, ticker: Ticker) -> Company:
         """Datos de una empresa."""
+        guardar_llamada(request, origen)
         return to_company(find_company(ticker))
 
     @app.get('/v1/sectors', response_model=list[Sector], tags=['empresas'])
-    def list_sectors() -> list[Sector]:
+    def list_sectors(request: Request, origen: OrigenHeader) -> list[Sector]:
         """Sectores y número de empresas de cada uno."""
+        guardar_llamada(request, origen)
         require_data()
         counts: dict[str, int] = {}
         for r in store.companies.values():
@@ -149,12 +175,15 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
     @app.get('/v1/companies/{ticker}/prices', response_model=PriceSeries, tags=['precios'],
              responses={404: {'description': 'Empresa no encontrada'}})
     def get_prices(
+        request: Request,
+        origen: OrigenHeader,
         ticker: Ticker,
         start: Annotated[date | None, Query(description='Desde (AAAA-MM-DD)')] = None,
         end: Annotated[date | None, Query(description='Hasta (AAAA-MM-DD)')] = None,
         limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
     ) -> PriceSeries:
         """Precios diarios de una empresa. Si hay más de `limit`, devuelve los más recientes."""
+        guardar_llamada(request, origen)
         if start and end and start > end:
             raise HTTPException(422, 'start no puede ser posterior a end')
         find_company(ticker)
