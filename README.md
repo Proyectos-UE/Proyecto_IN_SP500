@@ -12,26 +12,28 @@ El resultado serán dos archivos .csv con la informacion del precio del SP500 y 
 ## Ejemplos de peticiones
 
 Con la API arrancada (`python -m uvicorn app:app --reload`).
+Todos los endpoints (salvo `/health`) exigen la cabecera `x-origen` con el nombre del dispositivo que hace la petición.
 También se pueden probar desde http://127.0.0.1:8000/docs
 
 ### Casos correctos
 
 ```bash
-curl "http://127.0.0.1:8000/v1/companies?limit=5"                               # 200
-curl "http://127.0.0.1:8000/v1/companies?sector=Technology&limit=5"             # 200
-curl http://127.0.0.1:8000/v1/companies/AAPL                                    # 200
-curl "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=2025-01-01&end=2025-01-31"  # 200
-curl http://127.0.0.1:8000/v1/sectors                                           # 200
+curl -H "x-origen: sensor-01" "http://127.0.0.1:8000/v1/companies?limit=5"                               # 200
+curl -H "x-origen: sensor-01" "http://127.0.0.1:8000/v1/companies?sector=Technology&limit=5"             # 200
+curl -H "x-origen: sensor-01" http://127.0.0.1:8000/v1/companies/AAPL                                    # 200
+curl -H "x-origen: sensor-01" "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=2025-01-01&end=2025-01-31"  # 200
+curl -H "x-origen: sensor-01" http://127.0.0.1:8000/v1/sectors                                           # 200
 ```
 
 ### Casos inválidos
 
 ```bash
-curl http://127.0.0.1:8000/v1/companies/ZZZZ                                    # 404 empresa inexistente
-curl 'http://127.0.0.1:8000/v1/companies/AA$PL'                                 # 422 ticker mal formado
-curl "http://127.0.0.1:8000/v1/companies?limit=0"                               # 422 fuera de rango
-curl "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=hola"                # 422 fecha inválida
-curl "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=2025-05-01&end=2025-01-01"  # 422 rango invertido
+curl -H "x-origen: sensor-01" http://127.0.0.1:8000/v1/companies/ZZZZ                                    # 404 empresa inexistente
+curl -H "x-origen: sensor-01" 'http://127.0.0.1:8000/v1/companies/AA$PL'                                 # 422 ticker mal formado
+curl -H "x-origen: sensor-01" "http://127.0.0.1:8000/v1/companies?limit=0"                               # 422 fuera de rango
+curl -H "x-origen: sensor-01" "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=hola"                # 422 fecha inválida
+curl -H "x-origen: sensor-01" "http://127.0.0.1:8000/v1/companies/AAPL/prices?start=2025-05-01&end=2025-01-01"  # 422 rango invertido
+curl http://127.0.0.1:8000/v1/sectors                                           # 422 falta la cabecera x-origen
 ```
 
 ### Acceso no autorizado (webhook)
@@ -44,7 +46,7 @@ curl -X POST http://127.0.0.1:8000/verificacion \
 
 # Firma falsa -> 403
 curl -X POST http://127.0.0.1:8000/verificacion \
-  -H "Content-Type: application/json" -H "x-signature: sha256=falsa" \
+  -H "Content-Type: application/json" -H "x-signature: sha256=falsa" -H "x-origen: sensor-01" \
   -d '{"event_id": "evt-001", "event_type": "verification.simple"}'
 ```
 
@@ -66,6 +68,7 @@ Se ha implementado verificación con una clave en la cabecera de las peticiones 
 Para una validación exitosa será necesario lo siguietne:
 - El tamaño de la petición no puede ser superior a unos 70kb.
 - Tener un esquema de petición concreto que se pueden encontrar en models.py. Para /verificacion el esquema es "ValidacionBase"
+- Indicar el dispositivo que envía el evento en la cabecera "x-origen" (1 a 100 caracteres, obligatoria). Si falta -> 422.
 - Tener en la cabecera una clave valida. Para tener una clave valida se requiere lo siguiente
     - Añadir el campo "x-signature" a la cabecera
     - Tener la variable secreta con la que se lanza la API. Conocida en el archivo app.py como "secretWH"
@@ -91,7 +94,6 @@ Para una validación exitosa será necesario lo siguietne:
     Y por último en el valor de "x-signature" le asignamos computed_signature usando {{computed_signature}} como valor
 
 Si las validaciones anteriores pasan se devolverá un 202 con json indicando que ha pasado la validación y el cuerpo de la ptición.
-
 
 ## Guardado de eventos
 Cuando un evento pasa todas las validaciones en /verificacion lo guarda en una base SQLite local que crea si no existe. Tiene una única tabla llamada eventos y guarda el evento antes de responder que se ha guardado correctamente.

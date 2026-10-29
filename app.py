@@ -8,7 +8,7 @@ from typing import Annotated
 
 import pandas as pd
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi import Path as PathParam, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
@@ -29,12 +29,21 @@ def valid_signature(body: bytes, received: str, secretWH: bytes) -> bool:
     expected = 'sha256=' + hmac.new(secretWH, body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, received)
 
-def exigir_origen(request: Request) -> str:
-    """Dispositivo que envía la petición (cabecera x-origen). Responde 422 si falta o no es válido."""
-    origen = request.headers.get('x-origen', '').strip()
+# Declarada como Header para que aparezca como campo rellenable en /docs
+XOrigen = Annotated[str | None, Header(description='Dispositivo que envía la petición (obligatoria, 1 a 100 caracteres)')]
+
+
+def comprobar_origen(valor: str | None) -> str:
+    """Devuelve el origen sin espacios o responde 422 si falta o no es válido."""
+    origen = (valor or '').strip()
     if not 1 <= len(origen) <= 100:
         raise HTTPException(422, 'Cabecera x-origen obligatoria (1 a 100 caracteres)')
     return origen
+
+
+def exigir_origen(x_origen: XOrigen = None) -> str:
+    """Dependencia de los GET: lee la cabecera x-origen (FastAPI la muestra en /docs)."""
+    return comprobar_origen(x_origen)
 
 
 # Se declara como parámetro de los endpoints GET: origen: OrigenHeader
@@ -97,8 +106,8 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
         return {"status": "ok", "data_loaded": store.loaded}
 
     #Al pedir directamente el request no se muestra la información a rellenar en docs
-    async def validacionesBase(request: Request) -> dict: 
-        """Comprueba tamaño, firma WEBHOOK_SECRET, cabecera x-origen y valida el cuerpo de la petición"""
+    async def validacionesBase(request: Request, x_origen: XOrigen = None) -> dict: 
+        """Comprueba tamaño, firma (WEBHOOK_SECRET), cabecera x-origen y valida el cuerpo de la petición"""
         
         content_length = request.headers.get('content-length')
         if content_length and int(content_length) > 65536:
@@ -114,7 +123,7 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
             raise HTTPException(403, 'Firma Invalida')
 
         # Dispositivo que envía el evento: junto con event_id forma la clave del evento
-        origen = exigir_origen(request)
+        origen = comprobar_origen(x_origen)
 
         try:
             data_salida = ValidacionBase.model_validate_json(bodyRaw)
@@ -126,8 +135,11 @@ def create_app(dataDir: Path, secretWH: bytes, inboxPath: Path | None = None) ->
     
     @app.post('/verificacion', status_code=202, tags=['webhook'])
     async def verificacion(data_salida: dict = Depends(validacionesBase)) -> dict:
-        """Valida el evento, lo guarda en la bandeja y solo entonces confirma. 
-        Un dos evetnos iguales devuelve status='duplicado' sin guardarlo otra vez."""
+        """Valida el evento, lo guarda en la bandeja y solo entonces confirma (202).
+
+        La clave del evento es (cabecera x-origen, event_id). Un reenvío idéntico
+        devuelve status='duplicado' sin guardarlo otra vez.
+        """
         evento = Evento(origen=data_salida['origen'], **data_salida['output'])
         try:
             estado = await run_in_threadpool(inbox.store, evento)
