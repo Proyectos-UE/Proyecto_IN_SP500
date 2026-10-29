@@ -100,6 +100,8 @@ Cuando un evento pasa todas las validaciones en /verificacion lo guarda en una b
 
 Cada evento tinene una clave compuesta. Esta clave es origen y event_id, donde origen es el dispositivo que envía el evento que está en la cabecera junto a la firma de la petición. Y el event_id que diferencia eventos enviados por el mismo dispositivo.El mismo event_id desde otros dispositivos son eventos distintos.
 
+Para ver los eventos en la base de datos ejecuta el archivo ver_eventos.py en la terminal con python ver_eventos.py
+
 ### Verificaciones
 - Si se encuentra un evento identico en la base de datos, al comparar los hashes devuelve el estado del evento a "duplicado" y no se guarda.
 - Si tienen la misma clave, origen + event_id, devuelve un error indicando que hay un conflicto de información en el mismo evetno.
