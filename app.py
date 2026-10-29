@@ -1,4 +1,6 @@
 #AQUI PARA HACER LA APLICACION
+from fastapi import FastAPI, HTTPException, Request, Depends
+from pydantic import ValidationError
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -72,8 +74,8 @@ def create_app(dataDir: Path, secretWH: bytes) -> FastAPI:
     def health():
         return {"status": "ok", "data_loaded": store.loaded}
 
-    @app.post('/verificacion', status_code=202)
-    async def receive(request: Request) -> dict: #Al pedir directamente el request no se muestra la información a rellenar en docs
+    #Al pedir directamente el request no se muestra la información a rellenar en docs
+    async def validacionesBase(request: Request) -> dict: 
         """Comprueba tamaño, la calve WEBHOOK_SECRET y valida el cuerpo de la petición"""
         
         content_length = request.headers.get('content-length')
@@ -92,8 +94,18 @@ def create_app(dataDir: Path, secretWH: bytes) -> FastAPI:
             data_salida = ValidacionBase.model_validate_json(bodyRaw)
         except ValidationError:
             raise HTTPException(422, 'Esquema de la petición invalido')
+
         return {'accepted': True, 'output': data_salida.model_dump()}
 
+    
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.post('/verificacion', status_code=202)
+    async def verificacion(data_salida: dict = Depends(validacionesBase)) -> dict:
+        """Endpoint para comprobar las validaciones base"""
+        return data_salida
     @app.get('/v1/companies', response_model=list[Company], tags=['empresas'])
     def list_companies(
         sector: Annotated[str | None, Query(max_length=60)] = None,
