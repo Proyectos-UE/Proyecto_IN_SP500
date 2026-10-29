@@ -1,5 +1,5 @@
 #AQUI PARA HACER LA APLICACION
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from pydantic import ValidationError
 from pathlib import Path
 import os
@@ -21,13 +21,9 @@ def create_app(dataDir: Path, secretWH: bytes) -> FastAPI:
     if not secretWH:
         raise ValueError('La variable WebhookSecret es necesaria')
     app = FastAPI(title='API_SP500', version="0.0.1")
-    
-    @app.get("/health")
-    def health():
-        return {"status": "ok"}
 
-    @app.post('/verificacion', status_code=202)
-    async def receive(request: Request) -> dict: #Al pedir directamente el request no se muestra la información a rellenar en docs
+    #Al pedir directamente el request no se muestra la información a rellenar en docs
+    async def validacionesBase(request: Request) -> dict: 
         """Comprueba tamaño, la calve WEBHOOK_SECRET y valida el cuerpo de la petición"""
         
         content_length = request.headers.get('content-length')
@@ -46,7 +42,18 @@ def create_app(dataDir: Path, secretWH: bytes) -> FastAPI:
             data_salida = ValidacionBase.model_validate_json(bodyRaw)
         except ValidationError:
             raise HTTPException(422, 'Esquema de la petición invalido')
+
         return {'accepted': True, 'output': data_salida.model_dump()}
+
+    
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.post('/verificacion', status_code=202)
+    async def verificacion(data_salida: dict = Depends(validacionesBase)) -> dict:
+        """Endpoint para comprobar las validaciones base"""
+        return data_salida
     
     return app
     
